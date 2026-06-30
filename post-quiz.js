@@ -156,14 +156,38 @@ Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explana
     accessSecret: xAccessSecret,
   });
 
-  const result = await twitter.v2.tweet(tweetText);
+ const result = await twitter.v2.tweet(tweetText);
   console.log("Posted successfully. Tweet ID:", result.data.id);
 
-  // Note: answerText is logged above for manual reply-posting, or you can
-  // extend this script with a second scheduled job that posts it as a
-  // reply ~2-4 hours later (would need to persist tweet ID + answer
-  // somewhere, e.g. a small KV store or database, since each cron run
-  // here is a fresh process with no memory of previous runs).
+  if (answerText) {
+    const dbUrl = process.env.DATABASE_URL;
+    if (dbUrl) {
+      const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
+      try {
+        await client.connect();
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS pending_answers (
+            id SERIAL PRIMARY KEY,
+            tweet_id TEXT NOT NULL,
+            answer_text TEXT NOT NULL,
+            posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            replied BOOLEAN NOT NULL DEFAULT FALSE
+          );
+        `);
+        await client.query(
+          `INSERT INTO pending_answers (tweet_id, answer_text) VALUES ($1, $2);`,
+          [result.data.id, answerText]
+        );
+        console.log("Saved answer for later reply.");
+      } catch (dbErr) {
+        console.error("Failed to save answer to database:", dbErr.message);
+      } finally {
+        await client.end();
+      }
+    } else {
+      console.log("No DATABASE_URL set, skipping answer save.");
+    }
+  }
 }
 
 main().catch((err) => {
