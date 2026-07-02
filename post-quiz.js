@@ -106,18 +106,26 @@ async function main() {
   const prompt = `Generate one ${postType} question post for X (Twitter) for an account called @${handle}.
 
 Rules:
-- Start with a relevant emoji
-- Ask a clear ${postType} question
-- Provide 4 multiple choice options labeled A) B) C) D)
-- End with "Answer drops in 2 hrs - reply with your guess!"
+- Start with a relevant emoji  
+- Ask an engaging ${postType} question
+- Do NOT include multiple choice options in the post
+- End with "Drop your answer below! 👇"
 - Tone: ${toneLabel}
 - Difficulty: ${difficultyLabel}
 - Maximum 240 characters total
 - No hashtags
 
-Then on a new line starting with "ANSWER:" give the correct answer letter and a one-sentence explanation.
+Then on a new line write "OPTIONS:" followed by 4 multiple choice options labeled A) B) C) D) as a short follow-up reply (max 200 chars total for all 4 options combined).
 
-Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explanation]". Nothing else, no preamble.`;
+Then on a new line write "ANSWER:" followed by the correct letter and a one-sentence explanation.
+
+Return ONLY:
+Line 1: the tweet text
+Blank line
+OPTIONS: A) ... B) ... C) ... D) ...
+Blank line  
+ANSWER: [letter] - [explanation]
+Nothing else.`;
 
   console.log(`[${new Date().toISOString()}] Generating ${postType} post (difficulty=${difficulty}, tone=${tone})...`);
 
@@ -137,6 +145,8 @@ Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explana
 
   const parts = fullText.split(/\n\s*\n/);
   const tweetText = parts[0].trim();
+  const optionsMatch = fullText.match(/OPTIONS:\s*(.+?)(?:\n\s*\n|ANSWER:)/s);
+  const optionsText = optionsMatch ? optionsMatch[1].trim() : null;
   const answerMatch = fullText.match(/ANSWER:\s*(.+)/s);
   const answerText = answerMatch ? answerMatch[1].trim() : null;
 
@@ -155,6 +165,9 @@ Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explana
   console.log("Generated post:");
   console.log(tweetText);
   console.log(`(${tweetText.length} characters)`);
+  if (optionsText) {
+    console.log("Options (for immediate reply):", optionsText);
+  }
   if (answerText) {
     console.log("Answer (for later reply):", answerText);
   }
@@ -171,8 +184,18 @@ Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explana
     accessSecret: xAccessSecret,
   });
 
- const result = await twitter.v2.tweet(tweetText);
+  const result = await twitter.v2.tweet(tweetText);
   console.log("Posted successfully. Tweet ID:", result.data.id);
+
+  // Post options as immediate reply
+  if (optionsText) {
+    try {
+      const optionsReply = await twitter.v2.reply(optionsText, result.data.id);
+      console.log("Posted options reply. Reply ID:", optionsReply.data.id);
+    } catch (optErr) {
+      console.error("Failed to post options reply:", optErr.message);
+    }
+  }
 
   if (answerText) {
     const dbUrl = process.env.DATABASE_URL;
@@ -180,18 +203,20 @@ Return ONLY the tweet text, then a blank line, then "ANSWER: [letter] - [explana
       const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
       try {
         await client.connect();
-        await client.query(`
+          await client.query(`
           CREATE TABLE IF NOT EXISTS pending_answers (
             id SERIAL PRIMARY KEY,
             tweet_id TEXT NOT NULL,
+            options_text TEXT,
             answer_text TEXT NOT NULL,
             posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            options_replied BOOLEAN NOT NULL DEFAULT FALSE,
             replied BOOLEAN NOT NULL DEFAULT FALSE
           );
         `);
         await client.query(
-          `INSERT INTO pending_answers (tweet_id, answer_text) VALUES ($1, $2);`,
-          [result.data.id, answerText]
+          `INSERT INTO pending_answers (tweet_id, options_text, answer_text) VALUES ($1, $2, $3);`,
+          [result.data.id, optionsText, answerText]
         );
         console.log("Saved answer for later reply.");
       } catch (dbErr) {
