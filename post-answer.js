@@ -38,7 +38,7 @@ async function main() {
   `);
 
   const due = await client.query(
-    `SELECT id, tweet_id, answer_text FROM pending_answers
+    `SELECT id, tweet_id, options_text, answer_text FROM pending_answers
      WHERE replied = FALSE
      AND posted_at <= NOW() - ($1 || ' hours')::INTERVAL
      ORDER BY posted_at ASC;`,
