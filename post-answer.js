@@ -27,14 +27,23 @@ async function main() {
   const client = new pg.Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
   await client.connect();
 
-  await client.query(`
+await client.query(`
     CREATE TABLE IF NOT EXISTS pending_answers (
       id SERIAL PRIMARY KEY,
       tweet_id TEXT NOT NULL,
+      options_text TEXT,
       answer_text TEXT NOT NULL,
       posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      options_replied BOOLEAN NOT NULL DEFAULT FALSE,
       replied BOOLEAN NOT NULL DEFAULT FALSE
     );
+  `);
+
+  // Add options_text column if it doesn't exist yet (migration for existing tables)
+  await client.query(`
+    ALTER TABLE pending_answers
+    ADD COLUMN IF NOT EXISTS options_text TEXT,
+    ADD COLUMN IF NOT EXISTS options_replied BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 
   const due = await client.query(
